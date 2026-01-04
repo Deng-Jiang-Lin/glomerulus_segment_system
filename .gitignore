@@ -1,0 +1,26 @@
+# 忽略IDE配置文件
+.idea/
+.vscode/
+
+# 忽略Python缓存文件
+__pycache__/
+*.py[cod]
+
+# 忽略日志文件
+*.log
+
+# 忽略模型和权重文件
+*.onnx
+pretrained/
+# 忽略临时文件和文件夹
+temp/
+uploads/
+results/
+
+# 忽略静态资源
+static/11-356_wsi.tiff
+
+
+# 忽略环境配置文件
+.env
+*.bak

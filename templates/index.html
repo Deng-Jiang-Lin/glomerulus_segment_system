@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>肾小球分割系统</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="head">肾小球图像分割系统</div>
+<div class="container">
+    <div class="images">
+        <div class="uploaded-img">
+            <div class="img-title" style="color: aliceblue;">病理图片</div>
+            <div class="img-placeholder"></div>
+        </div>
+
+        <div class="segmented-img">
+            <div class="img-title" style="color: aliceblue;">分割结果</div>
+            <div class="img-placeholder"></div>
+        </div>
+    </div>
+    <div class="actions-row">
+        <div class="btn-group">
+            <button id="userMgmtBtn" class="action-btn">用户管理</button>
+            <button id="settings" class="action-btn">配置</button>
+            <button id="uploadBtn" class="action-btn">上传</button>
+            <button id="segmentBtn" class="action-btn">分割</button>
+            <button id="downloadBtn" class="action-btn">下载</button>
+            <button id="history" class="action-btn">历史记录</button>
+        </div>
+    </div>
+</div>
+<div class="foot">
+</div>
+<div id="toast" aria-live="polite"
+     style="position:fixed;top:18px;right:18px;z-index:9999;display:none;max-width:320px;box-shadow:0 6px 18px rgba(0,0,0,0.14);border-radius:8px;overflow:hidden;font-family:Segoe UI,Arial,sans-serif"></div>
+<script>
+    (function () {
+        const uploadBtn = document.getElementById('uploadBtn');
+        const toastEl = document.getElementById('toast');
+        const uploadedContainer = document.querySelector('.uploaded-img .img-placeholder');
+
+        function setToast(text, level = 'info', timeout = 4000) {
+            const bg = (level === 'error') ? '#fef0f0' : (level === 'success' ? '#f0fff4' : '#ffffff');
+            const color = (level === 'error') ? '#8b1e1e' : (level === 'success' ? '#1e6b32' : '#333');
+            toastEl.innerHTML = `<div style="padding:12px 14px;background:${bg};color:${color}">
+                <div style="font-weight:600;margin-bottom:6px">${escapeHtml(level.toUpperCase())}</div>
+                <div style="font-size:13px;line-height:1.3">${escapeHtml(text)}</div>
+            </div>`;
+            toastEl.style.display = 'block';
+            if (timeout > 0) {
+                clearTimeout(toastEl._t);
+                toastEl._t = setTimeout(() => {
+                    toastEl.style.display = 'none';
+                }, timeout);
+            }
+        }
+
+        function escapeHtml(s) {
+            if (!s) return '';
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": "&#39;"}[c];
+            });
+        }
+
+        uploadBtn.addEventListener('click', function () {
+            setToast('开始处理...', 'info');
+            fetch('/upload-trigger', { method: 'POST' })
+                .then(r => r.text().then(text => ({ ok: r.ok, status: r.status, text })))
+                .then(obj => {
+                    if (obj.ok) {
+                        try {
+                            // 复用原有成功处理逻辑；handleSuccess 内部会尝试解析 JSON
+                            handleSuccess(obj.text);
+                        } catch (e) {
+                            console.log(e);
+                            setToast('处理失败：' + e, 'error');
+                        }
+                    } else {
+                        setToast('请求失败: HTTP ' + obj.status + ' — ' + obj.text, 'error');
+                    }
+                })
+                .catch(err => setToast('请求失败: ' + err, 'error'));
+        });
+
+        const segmentBtn = document.getElementById('segmentBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const segmentedPlaceholder = document.querySelector('.segmented-img .img-placeholder');
+
+      segmentBtn.addEventListener('click', function () {
+    setToast('开始分割...', 'info', 0);
+
+    fetch('/segment', {
+        method: 'POST'
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (!data.seg_url) {
+            throw new Error('接口未返回 seg_url');
+        }
+
+        setToast('分割完成', 'success');
+
+        const img = document.createElement('img');
+        img.src = data.seg_url + '?t=' + Date.now(); // 防缓存
+        img.alt = 'segmentation result';
+
+        segmentedPlaceholder.innerHTML = '';
+        segmentedPlaceholder.appendChild(img);
+
+        downloadBtn.onclick = () => {
+            window.open(data.seg_url, '_blank');
+        };
+    })
+    .catch(err => {
+        console.error(err);
+        setToast('分割失败', 'error');
+    })
+    .finally(() => {
+        setTimeout(() => {
+            toastEl.style.display = 'none';
+        }, 5000);
+    });
+});
+
+
+        // 已移除文件选择与上传相关的前端实现——前端仅调用后端触发接口。
+
+        function handleSuccess(responseText) {
+            let data = null;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                // 非 JSON 响应，退回为简单文本
+                setToast('上传成功（服务器未返回 JSON）：' + responseText);
+                // 仍尝试本地预览
+                tryLocalPreview();
+                return;
+            }
+
+            let filename = data.filename || 'unknown';
+            const contentType = data.content_type || data.contentType || 'unknown';
+            const sizeMb = (typeof data.size_mb === 'number') ? data.size_mb.toFixed(2) : (data.size_mb || 'unknown');
+            console.log(filename)
+            // 显示详细信息到状态区
+            setToast(`上传成功: ${filename}  |  类型: ${contentType}  |  大小: ${sizeMb} MB`);
+
+            // 保存最后上传的服务器文件名，供分割按钮使用
+            window.lastUploadedFilename = filename;
+            // 尝试使用服务器静态 URL 作为预览，如果不可用则回退到本地 blob
+            // const serverUrl = `/uploads/${encodeURIComponent(filename)}`;
+            // 创建图片节点并尝试加载服务器图片
+            const serverUrl = filename
+            const img = document.createElement('img');
+            img.alt = 'uploaded image';
+            img.src = serverUrl;
+            img.onload = function () {
+                uploadedContainer.innerHTML = '';
+                uploadedContainer.appendChild(img);
+            };
+            img.onerror = function () {
+                // 服务器预览失败，使用本地 blob 预览
+                tryLocalPreview();
+            };
+
+            function tryLocalPreview() {
+                try {
+                    // const url = URL.createObjectURL(fileInput.files[0]);
+                    const url = filename
+                    uploadedContainer.innerHTML = '';
+                    const limg = document.createElement('img');
+                    limg.src = url;
+                    limg.alt = 'uploaded image';
+
+                    uploadedContainer.appendChild(limg);
+                } catch (e) {
+                    console.warn('无法创建本地预览：', e);
+                }
+            }
+        }
+
+        // 模型与配置弹窗（Settings）
+        const settingsBtn = document.getElementById('settings');
+
+        // 新建：配置弹窗（更大字体，模型信息表格）
+        const configModalHtml = `
+<div id="configModal" style="position:fixed;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:10000">
+  <div style="background:#fff;padding:24px;border-radius:12px;min-width:1000px;max-width:95%;font-size:16px;box-shadow:0 4px 20px rgba(0,0,0,0.15);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #f0f0f0;padding-bottom:16px">
+      <h2 style="margin:0;font-size:24px;color:#2c3e50;font-weight:600">模型配置</h2>
+      <button id="closeConfigBtn" class="action-btn" style="background:#e74c3c;color:#fff;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px">关闭</button>
+    </div>
+
+    <!-- 模型统计信息 -->
+    <div style="display:flex;gap:20px;margin-bottom:20px;padding:16px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:8px;color:#fff">
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="totalModelsCount">-</div>
+        <div style="font-size:14px;opacity:0.9">总模型数</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="activeModelCount">-</div>
+        <div style="font-size:14px;opacity:0.9">激活模型</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="totalSizeDisplay">-</div>
+        <div style="font-size:14px;opacity:0.9">总占用空间</div>
+      </div>
+    </div>
+
+    <div style="overflow:auto;max-height:480px;border:1px solid #e0e6ed;border-radius:8px;background:#fafbfc">
+      <table id="modelsTable" style="width:100%;border-collapse:collapse;font-size:14px">
+        <thead>
+          <tr style="background:linear-gradient(to right,#4facfe 0%,#00f2fe 100%);color:#fff;text-align:left">
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">模型ID</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">模型名称</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">版本号</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">模型大小</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">上传时间</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">类型</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">状态</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">操作</th>
+          </tr>
+        </thead>
+        <tbody id="modelsTableBody"></tbody>
+      </table>
+    </div>
+    
+    <!-- 上传新模型区域 -->
+    <div style="margin-top:20px;padding:16px;background:#f8f9fa;border-radius:8px;border:2px dashed #dee2e6">
+      <h4 style="margin:0 0 12px 0;color:#495057">上传新模型</h4>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="modelFileInput" accept=".pt,.pth" style="padding:8px;border:1px solid #ced4da;border-radius:4px;background:#fff" />
+        <button id="uploadModelBtn" class="action-btn" style="background:#28a745;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:500">
+          <span>📤</span> 上传模型
+        </button>
+        <div style="flex:1"></div>
+        <button id="refreshModelsBtn" class="action-btn" style="background:#17a2b8;color:#fff;padding:10px 16px;border:none;border-radius:6px;cursor:pointer">
+          <span>🔄</span> 刷新
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+
+        document.body.insertAdjacentHTML('beforeend', configModalHtml);
+        const configModal = document.getElementById('configModal');
+        const closeConfigBtn = document.getElementById('closeConfigBtn');
+        const modelsTableBody = document.getElementById('modelsTableBody');
+        const modelFileInput = document.getElementById('modelFileInput');
+        const uploadModelBtn = document.getElementById('uploadModelBtn');
+        const refreshModelsBtn = document.getElementById('refreshModelsBtn');
+        const totalModelsCount = document.getElementById('totalModelsCount');
+        const activeModelCount = document.getElementById('activeModelCount');
+        const totalSizeDisplay = document.getElementById('totalSizeDisplay');
+
+        settingsBtn.addEventListener('click', function(){
+            configModal.style.display = 'flex';
+            loadConfigModels();
+        });
+
+        closeConfigBtn.addEventListener('click', function(){ 
+            configModal.style.display='none'; 
+        });
+
+        refreshModelsBtn.addEventListener('click', function(){
+            loadConfigModels();
+        });
+
+        function loadConfigModels(){
+            modelsTableBody.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:#6c757d"><div style="font-size:16px">⏳ 加载模型信息中...</div></td></tr>';
+            
+            fetch('/models').then(r=>r.json()).then(data=>{
+                const models = data.models || [];
+                const selectedModel = data.selected || '';
+                
+                // 更新统计信息
+                totalModelsCount.textContent = models.length;
+                activeModelCount.textContent = selectedModel ? '1' : '0';
+                
+                // 计算总大小
+                let totalSize = 0;
+                models.forEach(model => {
+                    if (model.size_mb && typeof model.size_mb === 'number') {
+                        totalSize += model.size_mb;
+                    }
+                });
+                totalSizeDisplay.textContent = totalSize > 1024 ? 
+                    (totalSize / 1024).toFixed(2) + ' GB' : 
+                    totalSize.toFixed(2) + ' MB';
+                
+                modelsTableBody.innerHTML = '';
+                
+                if (models.length === 0) {
+                    modelsTableBody.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:#6c757d"><div style="font-size:16px">📁 暂无模型文件</div><div style="font-size:14px;margin-top:8px;color:#adb5bd">请上传模型文件开始使用</div></td></tr>';
+                    return;
+                }
+                
+                models.forEach((model, idx) => {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid #e9ecef';
+                    tr.style.transition = 'background-color 0.2s';
+                    tr.onmouseover = function() { this.style.backgroundColor = '#f8f9fa'; };
+                    tr.onmouseout = function() { this.style.backgroundColor = ''; };
+                    
+                    // 处理模型信息，如果是字符串则作为文件名处理
+                    let modelInfo = {};
+                    if (typeof model === 'string') {
+                        modelInfo = {
+                            name: model,
+                            id: idx + 1,
+                            version: 'v1.0',
+                            size_mb: 0,
+                            upload_time: '未知',
+                            type: model.includes('unet') ? 'U-Net' : '通用',
+                            status: selectedModel === model ? '激活' : '可用'
+                        };
+                    } else {
+                        modelInfo = {
+                            name: model.name || `模型${idx + 1}`,
+                            id: model.id || (idx + 1),
+                            version: model.version || 'v1.0',
+                            size_mb: model.size_mb || 0,
+                            upload_time: model.upload_time || '未知',
+                            type: model.type || (model.name && model.name.includes('unet') ? 'U-Net' : '通用'),
+                            status: selectedModel === (model.name || model) ? '激活' : '可用'
+                        };
+                    }
+                    
+                    const sizeStr = modelInfo.size_mb > 0 ? 
+                        (modelInfo.size_mb > 1024 ? 
+                            (modelInfo.size_mb / 1024).toFixed(2) + ' GB' : 
+                            modelInfo.size_mb.toFixed(2) + ' MB') 
+                        : '未知';
+                    
+                    const statusHtml = modelInfo.status === '激活' ? 
+                        '<span style="background:#28a745;color:#fff;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:500">🟢 激活中</span>' :
+                        '<span style="background:#6c757d;color:#fff;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:500">⚪ 可用</span>';
+                    
+                    const actionBtns = `
+                        <button class='chooseModelBtn' data-name='${model.name || model}' 
+                                style='background:#007bff;color:#fff;border:none;padding:6px 12px;margin-right:6px;border-radius:4px;cursor:pointer;font-size:12px'>
+                            ${modelInfo.status === '激活' ? '✅ 已选择' : '🔄 选择'}
+                        </button>
+                        <button class='deleteModelBtn' data-name='${model.name || model}'
+                                style='background:#dc3545;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px'
+                                onclick='return confirm("确定要删除模型 ${modelInfo.name} 吗？")'>
+                            🗑️ 删除
+                        </button>
+                    `;
+                    
+                    const cols = [
+                        modelInfo.id,
+                        `<div style="font-weight:600;color:#2c3e50">${modelInfo.name}</div>`,
+                        modelInfo.version,
+                        sizeStr,
+                        modelInfo.upload_time,
+                        modelInfo.type,
+                        statusHtml,
+                        actionBtns
+                    ];
+                    
+                    cols.forEach(content => {
+                        const td = document.createElement('td');
+                        td.style.padding = '12px 8px';
+                        td.style.verticalAlign = 'middle';
+                        td.innerHTML = content;
+                        tr.appendChild(td);
+                    });
+                    
+                    modelsTableBody.appendChild(tr);
+                });
+
+                // 重新绑定按钮事件
+                bindModelActionButtons();
+
+            }).catch(e => { 
+                console.error('加载模型失败:', e);
+                modelsTableBody.innerHTML = '<tr><td colspan="8" style="padding:30px;text-align:center;color:#dc3545"><div style="font-size:16px">❌ 加载模型信息失败</div><div style="font-size:14px;margin-top:8px;">请检查网络连接后重试</div></td></tr>';
+                // 重置统计信息
+                totalModelsCount.textContent = '-';
+                activeModelCount.textContent = '-';
+                totalSizeDisplay.textContent = '-';
+            });
+        }
+
+        function bindModelActionButtons() {
+            // 选择模型按钮
+            Array.from(modelsTableBody.querySelectorAll('.chooseModelBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const modelName = this.dataset.name;
+                    this.textContent = '⏳ 切换中...';
+                    this.disabled = true;
+                    
+                    fetch('/select_model', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: modelName})
+                    })
+                    .then(r => r.json())
+                    .then(res => {
+                        if(res.selected) {
+                            setToast('✅ 模型已切换至: ' + res.selected, 'success');
+                            loadConfigModels(); // 重新加载以更新状态
+                        } else {
+                            throw new Error('切换失败');
+                        }
+                    })
+                    .catch(e => {
+                        console.error('切换模型失败:', e);
+                        setToast('❌ 切换模型失败: ' + e.message, 'error');
+                        this.textContent = '🔄 选择';
+                        this.disabled = false;
+                    });
+                });
+            });
+
+            // 删除模型按钮
+            Array.from(modelsTableBody.querySelectorAll('.deleteModelBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const modelName = this.dataset.name;
+                    this.textContent = '⏳ 删除中...';
+                    this.disabled = true;
+                    
+                    fetch('/delete_model', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({name: modelName})
+                    })
+                    .then(r => r.json())
+                    .then(res => {
+                        if(res.deleted) {
+                            setToast('✅ 已删除模型: ' + modelName, 'success');
+                            loadConfigModels(); // 重新加载
+                        } else {
+                            throw new Error('删除失败');
+                        }
+                    })
+                    .catch(e => {
+                        console.error('删除模型失败:', e);
+                        setToast('❌ 删除模型失败: ' + e.message, 'error');
+                        this.textContent = '🗑️ 删除';
+                        this.disabled = false;
+                    });
+                });
+            });
+        }
+        uploadModelBtn.addEventListener('click', function(){
+            const f = modelFileInput.files && modelFileInput.files[0];
+            if(!f){ setToast('请选择 .pt 文件再上传','error'); return; }
+            const form = new FormData(); form.append('file', f);
+            fetch('/upload_model',{method:'POST', body: form}).then(r=>r.json()).then(res=>{
+                if(res.name) { setToast('模型上传成功: '+res.name,'success'); loadConfigModels(); }
+                else setToast('上传失败','error');
+            }).catch(e=> setToast('上传失败: '+e,'error'));
+        });
+
+        // 用户管理功能
+        const userMgmtBtn = document.getElementById('userMgmtBtn');
+        
+        // 模拟用户数据
+        let mockUsers = [
+            {
+                id: 1,
+                name: "张三",
+                employee_id: "EMP001",
+                gender: "男",
+                phone: "13800138001",
+                email: "zhangsan@company.com",
+                create_time: "2024-01-15 09:30:00",
+                status: "激活"
+            },
+            {
+                id: 2,
+                name: "李四",
+                employee_id: "EMP002",
+                gender: "女",
+                phone: "13800138002",
+                email: "lisi@company.com",
+                create_time: "2024-02-20 14:15:00",
+                status: "激活"
+            },
+            {
+                id: 3,
+                name: "王五",
+                employee_id: "EMP003",
+                gender: "男",
+                phone: "13800138003",
+                email: "wangwu@company.com",
+                create_time: "2024-03-10 11:45:00",
+                status: "禁用"
+            },
+            {
+                id: 4,
+                name: "赵六",
+                employee_id: "EMP004",
+                gender: "女",
+                phone: "13800138004",
+                email: "zhaoliu@company.com",
+                create_time: "2024-12-27 08:20:00",
+                status: "激活"
+            }
+        ];
+        
+        // 创建用户管理弹窗
+        const userManagementModalHtml = `
+<div id="userManagementModal" style="position:fixed;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:10000">
+  <div style="background:#fff;padding:24px;border-radius:12px;min-width:1200px;max-width:95%;font-size:16px;box-shadow:0 4px 20px rgba(0,0,0,0.15);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #f0f0f0;padding-bottom:16px">
+      <h2 style="margin:0;font-size:24px;color:#2c3e50;font-weight:600">用户管理</h2>
+      <button id="closeUserMgmtBtn" class="action-btn" style="background:#e74c3c;color:#fff;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px">关闭</button>
+    </div>
+
+    <!-- 用户统计信息 -->
+    <div style="display:flex;gap:20px;margin-bottom:20px;padding:16px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:8px;color:#fff">
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="totalUsersCount">-</div>
+        <div style="font-size:14px;opacity:0.9">总用户数</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="activeUsersCount">-</div>
+        <div style="font-size:14px;opacity:0.9">激活用户</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="newUsersToday">-</div>
+        <div style="font-size:14px;opacity:0.9">今日新增</div>
+      </div>
+    </div>
+
+    <!-- 操作按钮区域 -->
+    <div style="margin-bottom:20px;display:flex;gap:12px;align-items:center">
+      <button id="addUserBtn" class="action-btn" style="background:#28a745;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:500">
+        <span>➕</span> 添加用户
+      </button>
+      <button id="refreshUsersBtn" class="action-btn" style="background:#17a2b8;color:#fff;padding:10px 16px;border:none;border-radius:6px;cursor:pointer">
+        <span>🔄</span> 刷新
+      </button>
+      <div style="flex:1"></div>
+      <input type="text" id="userSearchInput" placeholder="搜索用户..." style="padding:8px 12px;border:1px solid #ced4da;border-radius:4px;width:200px">
+    </div>
+
+    <div style="overflow:auto;max-height:500px;border:1px solid #e0e6ed;border-radius:8px;background:#fafbfc">
+      <table id="usersTable" style="width:100%;border-collapse:collapse;font-size:14px">
+        <thead>
+          <tr style="background:linear-gradient(to right,#4facfe 0%,#00f2fe 100%);color:#fff;text-align:left">
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">ID</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">名称</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">工号</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">性别</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">电话</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">邮箱</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">创建时间</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">状态</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">操作</th>
+          </tr>
+        </thead>
+        <tbody id="usersTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 添加/编辑用户弹窗 -->
+<div id="userFormModal" style="position:fixed;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:10001">
+  <div style="background:#fff;padding:24px;border-radius:12px;min-width:500px;max-width:90%;font-size:16px;box-shadow:0 4px 20px rgba(0,0,0,0.15);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #f0f0f0;padding-bottom:16px">
+      <h3 style="margin:0;font-size:20px;color:#2c3e50;font-weight:600" id="userFormTitle">添加用户</h3>
+      <button id="closeUserFormBtn" class="action-btn" style="background:#6c757d;color:#fff;padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px">取消</button>
+    </div>
+    
+    <form id="userForm" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:600;color:#495057">用户名称 *</label>
+        <input type="text" id="userName" required style="width:100%;padding:10px;border:1px solid #ced4da;border-radius:4px;box-sizing:border-box">
+      </div>
+      
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:600;color:#495057">工号 *</label>
+        <input type="text" id="userEmployeeId" required style="width:100%;padding:10px;border:1px solid #ced4da;border-radius:4px;box-sizing:border-box">
+      </div>
+      
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:600;color:#495057">性别</label>
+        <select id="userGender" style="width:100%;padding:10px;border:1px solid #ced4da;border-radius:4px;box-sizing:border-box">
+          <option value="未知">请选择</option>
+          <option value="男">男</option>
+          <option value="女">女</option>
+        </select>
+      </div>
+      
+      <div>
+        <label style="display:block;margin-bottom:4px;font-weight:600;color:#495057">电话</label>
+        <input type="tel" id="userPhone" style="width:100%;padding:10px;border:1px solid #ced4da;border-radius:4px;box-sizing:border-box">
+      </div>
+      
+      <div style="grid-column:1/-1">
+        <label style="display:block;margin-bottom:4px;font-weight:600;color:#495057">邮箱</label>
+        <input type="email" id="userEmail" style="width:100%;padding:10px;border:1px solid #ced4da;border-radius:4px;box-sizing:border-box">
+      </div>
+    </form>
+    
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button id="cancelUserFormBtn" type="button" style="background:#6c757d;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer">取消</button>
+      <button id="saveUserBtn" type="button" style="background:#007bff;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:500">保存</button>
+    </div>
+  </div>
+</div>
+`;
+
+        document.body.insertAdjacentHTML('beforeend', userManagementModalHtml);
+        
+        const userManagementModal = document.getElementById('userManagementModal');
+        const closeUserMgmtBtn = document.getElementById('closeUserMgmtBtn');
+        const usersTableBody = document.getElementById('usersTableBody');
+        const addUserBtn = document.getElementById('addUserBtn');
+        const refreshUsersBtn = document.getElementById('refreshUsersBtn');
+        const userSearchInput = document.getElementById('userSearchInput');
+        const totalUsersCount = document.getElementById('totalUsersCount');
+        const activeUsersCount = document.getElementById('activeUsersCount');
+        const newUsersToday = document.getElementById('newUsersToday');
+        
+        // 用户表单相关元素
+        const userFormModal = document.getElementById('userFormModal');
+        const closeUserFormBtn = document.getElementById('closeUserFormBtn');
+        const cancelUserFormBtn = document.getElementById('cancelUserFormBtn');
+        const saveUserBtn = document.getElementById('saveUserBtn');
+        const userFormTitle = document.getElementById('userFormTitle');
+        
+        let editingUserId = null; // 当前编辑的用户ID
+        
+        // 事件绑定
+        userMgmtBtn.addEventListener('click', function(){
+            userManagementModal.style.display = 'flex';
+            loadUsers();
+        });
+        
+        closeUserMgmtBtn.addEventListener('click', function(){
+            userManagementModal.style.display = 'none';
+        });
+        
+        refreshUsersBtn.addEventListener('click', function(){
+            loadUsers();
+        });
+        
+        addUserBtn.addEventListener('click', function(){
+            editingUserId = null;
+            userFormTitle.textContent = '添加用户';
+            clearUserForm();
+            userFormModal.style.display = 'flex';
+        });
+        
+        closeUserFormBtn.addEventListener('click', function(){
+            userFormModal.style.display = 'none';
+        });
+        
+        cancelUserFormBtn.addEventListener('click', function(){
+            userFormModal.style.display = 'none';
+        });
+        
+        saveUserBtn.addEventListener('click', function(){
+            saveUser();
+        });
+        
+        // 搜索功能
+        userSearchInput.addEventListener('input', function(){
+            const searchTerm = this.value.toLowerCase();
+            const rows = usersTableBody.querySelectorAll('tr');
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(searchTerm) ? '' : 'none';
+            });
+        });
+        
+        // 加载用户列表
+        function loadUsers() {
+            // 更新统计信息
+            totalUsersCount.textContent = mockUsers.length;
+            activeUsersCount.textContent = mockUsers.filter(u => u.status === '激活').length;
+            
+            // 计算今日新增用户
+            const today = new Date().toDateString();
+            const todayUsers = mockUsers.filter(u => {
+                const createDate = new Date(u.create_time).toDateString();
+                return createDate === today;
+            });
+            newUsersToday.textContent = todayUsers.length;
+            
+            usersTableBody.innerHTML = '';
+            
+            if (mockUsers.length === 0) {
+                usersTableBody.innerHTML = '<tr><td colspan="9" style="padding:30px;text-align:center;color:#6c757d"><div style="font-size:16px">👥 暂无用户数据</div><div style="font-size:14px;margin-top:8px;color:#adb5bd">点击添加用户开始管理</div></td></tr>';
+                return;
+            }
+            
+            mockUsers.forEach((user, idx) => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid #e9ecef';
+                tr.style.transition = 'background-color 0.2s';
+                tr.onmouseover = function() { this.style.backgroundColor = '#f8f9fa'; };
+                tr.onmouseout = function() { this.style.backgroundColor = ''; };
+                
+                const statusHtml = user.status === '激活' ? 
+                    '<span style="background:#28a745;color:#fff;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:500">🟢 激活</span>' :
+                    '<span style="background:#6c757d;color:#fff;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:500">⚫ 禁用</span>';
+                
+                const actionBtns = `
+                    <button class='editUserBtn' data-id='${user.id}' 
+                            style='background:#ffc107;color:#fff;border:none;padding:6px 12px;margin-right:6px;border-radius:4px;cursor:pointer;font-size:12px'>
+                        ✏️ 编辑
+                    </button>
+                    <button class='toggleUserBtn' data-id='${user.id}' data-status='${user.status}'
+                            style='background:${user.status === '激活' ? '#dc3545' : '#28a745'};color:#fff;border:none;padding:6px 12px;margin-right:6px;border-radius:4px;cursor:pointer;font-size:12px'>
+                        ${user.status === '激活' ? '🚫 禁用' : '✅ 激活'}
+                    </button>
+                    <button class='deleteUserBtn' data-id='${user.id}'
+                            style='background:#dc3545;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px'
+                            onclick='return confirm("确定要删除用户 ${user.name} 吗？")'>
+                        🗑️ 删除
+                    </button>
+                `;
+                
+                const cols = [
+                    user.id,
+                    `<div style="font-weight:600;color:#2c3e50">${user.name}</div>`,
+                    user.employee_id || '-',
+                    user.gender || '未知',
+                    user.phone || '-',
+                    user.email || '-',
+                    user.create_time,
+                    statusHtml,
+                    actionBtns
+                ];
+                
+                cols.forEach(content => {
+                    const td = document.createElement('td');
+                    td.style.padding = '12px 8px';
+                    td.style.verticalAlign = 'middle';
+                    td.innerHTML = content;
+                    tr.appendChild(td);
+                });
+                
+                usersTableBody.appendChild(tr);
+            });
+            
+            // 绑定用户操作按钮事件
+            bindUserActionButtons();
+        }
+        
+        // 绑定用户操作按钮事件
+        function bindUserActionButtons() {
+            // 编辑用户按钮
+            Array.from(usersTableBody.querySelectorAll('.editUserBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const userId = parseInt(this.dataset.id);
+                    editUser(userId);
+                });
+            });
+            
+            // 切换用户状态按钮
+            Array.from(usersTableBody.querySelectorAll('.toggleUserBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const userId = parseInt(this.dataset.id);
+                    const currentStatus = this.dataset.status;
+                    toggleUserStatus(userId, currentStatus);
+                });
+            });
+            
+            // 删除用户按钮
+            Array.from(usersTableBody.querySelectorAll('.deleteUserBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const userId = parseInt(this.dataset.id);
+                    deleteUser(userId);
+                });
+            });
+        }
+        
+        // 清空用户表单
+        function clearUserForm() {
+            document.getElementById('userName').value = '';
+            document.getElementById('userEmployeeId').value = '';
+            document.getElementById('userGender').value = '未知';
+            document.getElementById('userPhone').value = '';
+            document.getElementById('userEmail').value = '';
+        }
+        
+        // 编辑用户
+        function editUser(userId) {
+            const user = mockUsers.find(u => u.id === userId);
+            if (!user) {
+                setToast('❌ 找不到用户信息', 'error');
+                return;
+            }
+            
+            editingUserId = userId;
+            userFormTitle.textContent = '编辑用户';
+            
+            document.getElementById('userName').value = user.name || '';
+            document.getElementById('userEmployeeId').value = user.employee_id || '';
+            document.getElementById('userGender').value = user.gender || '未知';
+            document.getElementById('userPhone').value = user.phone || '';
+            document.getElementById('userEmail').value = user.email || '';
+            
+            userFormModal.style.display = 'flex';
+        }
+        
+        // 保存用户
+        function saveUser() {
+            const userData = {
+                name: document.getElementById('userName').value.trim(),
+                employee_id: document.getElementById('userEmployeeId').value.trim(),
+                gender: document.getElementById('userGender').value,
+                phone: document.getElementById('userPhone').value.trim(),
+                email: document.getElementById('userEmail').value.trim()
+            };
+            
+            // 基本验证
+            if (!userData.name) {
+                setToast('❌ 请输入用户名称', 'error');
+                return;
+            }
+            if (!userData.employee_id) {
+                setToast('❌ 请输入工号', 'error');
+                return;
+            }
+            
+            // 检查工号是否重复
+            const existingUser = mockUsers.find(u => u.employee_id === userData.employee_id && u.id !== editingUserId);
+            if (existingUser) {
+                setToast('❌ 工号已存在，请使用其他工号', 'error');
+                return;
+            }
+            
+            if (editingUserId) {
+                // 编辑模式
+                const userIndex = mockUsers.findIndex(u => u.id === editingUserId);
+                if (userIndex !== -1) {
+                    mockUsers[userIndex] = {
+                        ...mockUsers[userIndex],
+                        ...userData
+                    };
+                    setToast('✅ 用户信息更新成功', 'success');
+                }
+            } else {
+                // 添加模式
+                const newUser = {
+                    id: Math.max(...mockUsers.map(u => u.id)) + 1,
+                    ...userData,
+                    create_time: new Date().toLocaleString('zh-CN').replace(/\//g, '-'),
+                    status: '激活'
+                };
+                mockUsers.push(newUser);
+                setToast('✅ 用户添加成功', 'success');
+            }
+            
+            userFormModal.style.display = 'none';
+            loadUsers();
+        }
+        
+        // 切换用户状态
+        function toggleUserStatus(userId, currentStatus) {
+            const userIndex = mockUsers.findIndex(u => u.id === userId);
+            if (userIndex === -1) {
+                setToast('❌ 找不到用户信息', 'error');
+                return;
+            }
+            
+            const newStatus = currentStatus === '激活' ? '禁用' : '激活';
+            mockUsers[userIndex].status = newStatus;
+            
+            setToast(`✅ 用户状态已更新为: ${newStatus}`, 'success');
+            loadUsers();
+        }
+        
+        // 删除用户
+        function deleteUser(userId) {
+            const userIndex = mockUsers.findIndex(u => u.id === userId);
+            if (userIndex === -1) {
+                setToast('❌ 找不到用户信息', 'error');
+                return;
+            }
+            
+            const userName = mockUsers[userIndex].name;
+            mockUsers.splice(userIndex, 1);
+            
+            setToast(`✅ 用户 ${userName} 已删除`, 'success');
+            loadUsers();
+        }
+
+        // 历史记录功能
+        const historyBtn = document.getElementById('history');
+        
+        // 模拟历史记录数据
+        let mockHistoryRecords = [
+            {
+                id: 1,
+                name: "王节",
+                completion_time: "2024-12-27 14:30:25",
+                duration: "15.3秒",
+                download_url: "/results/glomerulus_001_result.jpg",
+                status: "已完成"
+            },
+            {
+                id: 2,
+                name: "刘红",
+                completion_time: "2024-12-27 13:45:18",
+                duration: "14秒",
+                download_url: "/results/glomerulus_002_result.jpg",
+                status: "已完成"
+            },
+            {
+                id: 3,
+                name: "张飞",
+                completion_time: "2024-12-27 12:15:42",
+                duration: "19秒",
+                download_url: "/results/glomerulus_003_result.jpg",
+                status: "已完成"
+            },
+            {
+                id: 4,
+                name: "陈丽",
+                completion_time: "2024-12-26 16:22:33",
+                duration: "13.2秒",
+                download_url: "/results/glomerulus_004_result.jpg",
+                status: "已完成"
+            },
+            {
+                id: 5,
+                name: "刘杨",
+                completion_time: "2024-12-26 15:18:09",
+                duration: "16.5秒",
+                download_url: "/results/glomerulus_005_result.jpg",
+                status: "已完成"
+            }
+        ];
+        
+        // 创建历史记录弹窗
+        const historyModalHtml = `
+<div id="historyModal" style="position:fixed;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:10000">
+  <div style="background:#fff;padding:24px;border-radius:12px;min-width:1100px;max-width:95%;font-size:16px;box-shadow:0 4px 20px rgba(0,0,0,0.15);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;border-bottom:2px solid #f0f0f0;padding-bottom:16px">
+      <h2 style="margin:0;font-size:24px;color:#2c3e50;font-weight:600">历史记录管理</h2>
+      <button id="closeHistoryBtn" class="action-btn" style="background:#e74c3c;color:#fff;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px">关闭</button>
+    </div>
+
+    <!-- 历史记录统计信息 -->
+    <div style="display:flex;gap:20px;margin-bottom:20px;padding:16px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);border-radius:8px;color:#fff">
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="totalRecordsCount">-</div>
+        <div style="font-size:14px;opacity:0.9">总记录数</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="todayRecordsCount">-</div>
+        <div style="font-size:14px;opacity:0.9">今日完成</div>
+      </div>
+      <div style="text-align:center;flex:1">
+        <div style="font-size:28px;font-weight:bold" id="avgProcessingTime">-</div>
+        <div style="font-size:14px;opacity:0.9">平均耗时</div>
+      </div>
+    </div>
+
+    <!-- 操作按钮区域 -->
+    <div style="margin-bottom:20px;display:flex;gap:12px;align-items:center">
+      <button id="refreshHistoryBtn" class="action-btn" style="background:#17a2b8;color:#fff;padding:10px 16px;border:none;border-radius:6px;cursor:pointer">
+        <span>🔄</span> 刷新
+      </button>
+      <button id="clearAllHistoryBtn" class="action-btn" style="background:#dc3545;color:#fff;padding:10px 16px;border:none;border-radius:6px;cursor:pointer">
+        <span>🗑️</span> 清空所有记录
+      </button>
+      <div style="flex:1"></div>
+      <input type="text" id="historySearchInput" placeholder="搜索历史记录..." style="padding:8px 12px;border:1px solid #ced4da;border-radius:4px;width:200px">
+    </div>
+
+    <div style="overflow:auto;max-height:500px;border:1px solid #e0e6ed;border-radius:8px;background:#fafbfc">
+      <table id="historyTable" style="width:100%;border-collapse:collapse;font-size:14px">
+        <thead>
+          <tr style="background:linear-gradient(to right,#4facfe 0%,#00f2fe 100%);color:#fff;text-align:left">
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">ID</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">名称</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">完成时间</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">耗时</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">状态</th>
+            <th style="padding:12px 8px;border-bottom:2px solid #fff;font-weight:600">操作</th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+`;
+
+        document.body.insertAdjacentHTML('beforeend', historyModalHtml);
+        
+        const historyModal = document.getElementById('historyModal');
+        const closeHistoryBtn = document.getElementById('closeHistoryBtn');
+        const historyTableBody = document.getElementById('historyTableBody');
+        const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
+        const clearAllHistoryBtn = document.getElementById('clearAllHistoryBtn');
+        const historySearchInput = document.getElementById('historySearchInput');
+        const totalRecordsCount = document.getElementById('totalRecordsCount');
+        const todayRecordsCount = document.getElementById('todayRecordsCount');
+        const avgProcessingTime = document.getElementById('avgProcessingTime');
+        
+        // 事件绑定
+        historyBtn.addEventListener('click', function(){
+            historyModal.style.display = 'flex';
+            loadHistoryRecords();
+        });
+        
+        closeHistoryBtn.addEventListener('click', function(){
+            historyModal.style.display = 'none';
+        });
+        
+        refreshHistoryBtn.addEventListener('click', function(){
+            loadHistoryRecords();
+        });
+        
+        clearAllHistoryBtn.addEventListener('click', function(){
+            if(confirm('确定要清空所有历史记录吗？此操作不可恢复！')) {
+                mockHistoryRecords = [];
+                setToast('✅ 所有历史记录已清空', 'success');
+                loadHistoryRecords();
+            }
+        });
+        
+        // 搜索功能
+        historySearchInput.addEventListener('input', function(){
+            const searchTerm = this.value.toLowerCase();
+            const rows = historyTableBody.querySelectorAll('tr');
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(searchTerm) ? '' : 'none';
+            });
+        });
+        
+        // 加载历史记录列表
+        function loadHistoryRecords() {
+            // 更新统计信息
+            totalRecordsCount.textContent = mockHistoryRecords.length;
+            
+            // 计算今日记录
+            const today = new Date().toDateString();
+            const todayRecords = mockHistoryRecords.filter(record => {
+                const recordDate = new Date(record.completion_time).toDateString();
+                return recordDate === today;
+            });
+            todayRecordsCount.textContent = todayRecords.length;
+            
+            // 计算平均处理时间
+            if (mockHistoryRecords.length > 0) {
+                const totalSeconds = mockHistoryRecords.reduce((sum, record) => {
+                    const timeStr = record.duration.replace('秒', '');
+                    const seconds = parseFloat(timeStr);
+                    return sum + (isNaN(seconds) ? 0 : seconds);
+                }, 0);
+                const avgTime = (totalSeconds / mockHistoryRecords.length).toFixed(1);
+                avgProcessingTime.textContent = avgTime + '秒';
+            } else {
+                avgProcessingTime.textContent = '-';
+            }
+            
+            historyTableBody.innerHTML = '';
+            
+            if (mockHistoryRecords.length === 0) {
+                historyTableBody.innerHTML = '<tr><td colspan="6" style="padding:30px;text-align:center;color:#6c757d"><div style="font-size:16px">📋 暂无历史记录</div><div style="font-size:14px;margin-top:8px;color:#adb5bd">完成分割任务后会显示在这里</div></td></tr>';
+                return;
+            }
+            
+            // 按时间倒序排列
+            const sortedRecords = [...mockHistoryRecords].sort((a, b) => new Date(b.completion_time) - new Date(a.completion_time));
+            
+            sortedRecords.forEach((record, idx) => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid #e9ecef';
+                tr.style.transition = 'background-color 0.2s';
+                tr.onmouseover = function() { this.style.backgroundColor = '#f8f9fa'; };
+                tr.onmouseout = function() { this.style.backgroundColor = ''; };
+                
+                const statusHtml = record.status === '已完成' ? 
+                    '<span style="background:#28a745;color:#fff;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:500">✅ 已完成</span>' :
+                    '<span style="background:#ffc107;color:#212529;padding:4px 8px;border-radius:12px;font-size:12px;font-weight:500">⏳ 处理中</span>';
+                
+                const actionBtns = `
+                    <button class='downloadRecordBtn' data-url='${record.download_url}' data-name='${record.name}' 
+                            style='background:#007bff;color:#fff;border:none;padding:6px 12px;margin-right:6px;border-radius:4px;cursor:pointer;font-size:12px'>
+                        💾 下载
+                    </button>
+                    <button class='deleteRecordBtn' data-id='${record.id}'
+                            style='background:#dc3545;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px'
+                            onclick='return confirm("确定要删除记录 ${record.name} 吗？")'>
+                        🗑️ 删除
+                    </button>
+                `;
+                
+                const cols = [
+                    record.id,
+                    `<div style="font-weight:600;color:#2c3e50;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${record.name}">${record.name}</div>`,
+                    record.completion_time,
+                    `<span style="color:#007bff;font-weight:500">${record.duration}</span>`,
+                    statusHtml,
+                    actionBtns
+                ];
+                
+                cols.forEach(content => {
+                    const td = document.createElement('td');
+                    td.style.padding = '12px 8px';
+                    td.style.verticalAlign = 'middle';
+                    td.innerHTML = content;
+                    tr.appendChild(td);
+                });
+                
+                historyTableBody.appendChild(tr);
+            });
+            
+            // 绑定历史记录操作按钮事件
+            bindHistoryActionButtons();
+        }
+        
+        // 绑定历史记录操作按钮事件
+        function bindHistoryActionButtons() {
+            // 下载按钮
+            Array.from(historyTableBody.querySelectorAll('.downloadRecordBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const downloadUrl = this.dataset.url;
+                    const fileName = this.dataset.name;
+                    downloadRecord(downloadUrl, fileName);
+                });
+            });
+            
+            // 删除按钮
+            Array.from(historyTableBody.querySelectorAll('.deleteRecordBtn')).forEach(btn => {
+                btn.addEventListener('click', function(){
+                    const recordId = parseInt(this.dataset.id);
+                    deleteRecord(recordId);
+                });
+            });
+        }
+        
+        // 下载记录
+        function downloadRecord(downloadUrl, fileName) {
+            try {
+                // 创建一个临时的下载链接
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = fileName.replace('.jpg', '_result.jpg');
+                link.style.display = 'none';
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                setToast(`📥 开始下载: ${fileName}`, 'success');
+            } catch (error) {
+                console.error('下载失败:', error);
+                setToast('❌ 下载失败，请检查文件是否存在', 'error');
+            }
+        }
+        
+        // 删除记录
+        function deleteRecord(recordId) {
+            const recordIndex = mockHistoryRecords.findIndex(record => record.id === recordId);
+            if (recordIndex === -1) {
+                setToast('❌ 找不到记录信息', 'error');
+                return;
+            }
+            
+            const recordName = mockHistoryRecords[recordIndex].name;
+            mockHistoryRecords.splice(recordIndex, 1);
+            
+            setToast(`✅ 记录 ${recordName} 已删除`, 'success');
+            loadHistoryRecords();
+        }
+        
+        // 添加新的历史记录（当完成分割时调用）
+        function addHistoryRecord(name, duration) {
+            const newRecord = {
+                id: Math.max(...mockHistoryRecords.map(r => r.id), 0) + 1,
+                name: name,
+                completion_time: new Date().toLocaleString('zh-CN', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                }).replace(/\//g, '-'),
+                duration: duration,
+                download_url: `/results/${name.replace('.jpg', '_result.jpg')}`,
+                status: "已完成"
+            };
+            
+            mockHistoryRecords.unshift(newRecord); // 添加到数组开头
+            
+            // 如果记录太多，保留最近的100条
+            if (mockHistoryRecords.length > 100) {
+                mockHistoryRecords = mockHistoryRecords.slice(0, 100);
+            }
+        }
+        
+        // 集成到现有分割功能中（修改现有的分割按钮处理）
+        const originalSegmentBtnHandler = segmentBtn.onclick;
+        segmentBtn.onclick = null;
+        segmentBtn.addEventListener('click', function () {
+            const startTime = performance.now();
+            setToast('开始分割...', 'info', 0);
+
+            fetch('/segment', {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.seg_url) {
+                    throw new Error('接口未返回 seg_url');
+                }
+
+                const endTime = performance.now();
+                const duration = ((endTime - startTime) / 1000).toFixed(1) + '秒';
+                
+                setToast('分割完成', 'success');
+
+                const img = document.createElement('img');
+                img.src = data.seg_url + '?t=' + Date.now();
+                img.alt = 'segmentation result';
+
+                segmentedPlaceholder.innerHTML = '';
+                segmentedPlaceholder.appendChild(img);
+
+                downloadBtn.onclick = () => {
+                    window.open(data.seg_url, '_blank');
+                };
+                
+                // 添加到历史记录
+                const fileName = window.lastUploadedFilename || '未知文件.jpg';
+                addHistoryRecord(fileName, duration);
+
+            })
+            .catch(err => {
+                console.error(err);
+                setToast('分割失败', 'error');
+            })
+            .finally(() => {
+                setTimeout(() => {
+                    toastEl.style.display = 'none';
+                }, 5000);
+            });
+        });
+    })();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "upload_path": "uploads",
+  "results_path": "results",
+  "pretrained_path": "pretrained",
+  "model": "UNetpp_best_model",
+  "patches_path": "patches",
+  "templates_path": "templates",
+  "static_path": "static",
+  "patch_size": [
+    2048,
+    2048
+  ],
+  "stride": 256
+}

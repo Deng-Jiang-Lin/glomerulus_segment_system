@@ -1,0 +1,256 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* 取消页面滚动条 */
+}
+
+/* 顶部蓝色栏样式 */
+.head {
+    width: 100%;
+    height: 50px;
+    background-color: #1565c0; /* 深蓝色 */
+    color: white;
+    display: flex;
+    font-size: large;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    position: fixed; /* 固定在页面顶部 */
+    top: 0;
+    left: 0;
+    z-index: 1000;
+}
+
+.container {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #333;
+    text-align: center;
+    /* 背景图片原有设置 */
+    background-image: url("/static/background.jpg");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    /* 新增：实现容器铺满屏幕 */
+    width: 100vw; /* 宽度占满整个视口 */
+    height: calc(100vh - 80px); /* 留出头部空间并避免滚动 */
+    margin: 0; /* 清除默认外边距，避免边缘留白 */
+    /* 给内容顶部留出空间，避免被固定头部覆盖 */
+    padding-top: 80px;
+}
+
+.images {
+    display: flex; /* 启用 Flexbox 布局 */
+    justify-content: center; /* 水平居中整个容器 */
+    gap: 6vw; /* 两张图之间的间距 */
+    margin-top: 24px; /* 更紧凑，避免内容超出 */
+    align-items: flex-start;
+}
+
+.uploaded-img,
+.segmented-img {
+    width: 30vw;
+    height: 33vw;
+    background-color: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(6px);
+    color: black;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    transition: all 0.3s ease;
+}
+
+.uploaded-img:hover,
+.segmented-img:hover {
+    background-color: rgba(255, 255, 255, 0.45); /* 鼠标悬停更亮一些 */
+}
+
+/* 标题在图片上方 */
+.img-title {
+    font-weight: 600;
+    padding: 10px 12px;
+    text-align: left;
+    color: #111;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* 图片占位/展示区域 */
+.img-placeholder {
+    width: 100%;
+    height: calc(100% - 36px);  /* 减去标题的高度 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    overflow: hidden;
+}
+
+.img-placeholder img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* 操作按钮组样式 */
+.actions-row {
+    display: flex;
+    justify-content: center;
+    margin-top: 18px;
+}
+
+.btn-group {
+    display: flex;
+    gap: 18px;
+    background: rgba(255, 255, 255, 0.06);
+    padding: 12px 18px;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.action-btn {
+    background: linear-gradient(180deg, #1e90ff, #0b63d6);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.action-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(11, 99, 214, 0.2);
+}
+
+/* 配置弹窗相关样式 */
+#configModal table th {
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+}
+
+#configModal table td {
+    font-size: 14px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+#configModal .chooseModelBtn:hover {
+    background: #0056b3 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+}
+
+#configModal .deleteModelBtn:hover {
+    background: #c82333 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+#refreshModelsBtn:hover {
+    background: #138496 !important;
+    transform: translateY(-1px);
+}
+
+#uploadModelBtn:hover {
+    background: #218838 !important;
+    transform: translateY(-1px);
+}
+
+/* 模型统计卡片动画 */
+#configModal .stats-card {
+    transition: transform 0.2s ease;
+}
+
+#configModal .stats-card:hover {
+    transform: translateY(-2px);
+}
+
+/* 用户管理弹窗相关样式 */
+#userManagementModal table th,
+#userManagementModal table td {
+    font-size: 14px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+#userManagementModal .editUserBtn:hover {
+    background: #e0a800 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3);
+}
+
+#userManagementModal .toggleUserBtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+#userManagementModal .deleteUserBtn:hover {
+    background: #c82333 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+/* 用户表单样式 */
+#userFormModal input:focus,
+#userFormModal select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 5px rgba(0, 123, 255, 0.3);
+}
+
+#userFormModal button:hover {
+    transform: translateY(-1px);
+}
+
+#saveUserBtn:hover {
+    background: #0056b3 !important;
+}
+
+#cancelUserFormBtn:hover,
+#closeUserFormBtn:hover {
+    background: #545b62 !important;
+}
+
+/* 历史记录弹窗相关样式 */
+#historyModal table th,
+#historyModal table td {
+    font-size: 14px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+#historyModal .downloadRecordBtn:hover {
+    background: #0056b3 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3);
+}
+
+#historyModal .deleteRecordBtn:hover {
+    background: #c82333 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+#refreshHistoryBtn:hover {
+    background: #138496 !important;
+    transform: translateY(-1px);
+}
+
+#clearAllHistoryBtn:hover {
+    background: #c82333 !important;
+    transform: translateY(-1px);
+}
+
+/* 历史记录统计卡片动画 */
+#historyModal .stats-card {
+    transition: transform 0.2s ease;
+}
+
+#historyModal .stats-card:hover {
+    transform: translateY(-2px);
+}
