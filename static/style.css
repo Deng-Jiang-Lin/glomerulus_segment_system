@@ -43,14 +43,14 @@ html, body {
     display: flex; /* 启用 Flexbox 布局 */
     justify-content: center; /* 水平居中整个容器 */
     gap: 6vw; /* 两张图之间的间距 */
-    margin-top: 24px; /* 更紧凑，避免内容超出 */
+    margin-top: 240px; /* 更紧凑，避免内容超出 */
     align-items: flex-start;
 }
 
 .uploaded-img,
 .segmented-img {
     width: 30vw;
-    height: 33vw;
+    height: 18vw;
     background-color: rgba(255, 255, 255, 0.3);
     backdrop-filter: blur(6px);
     color: black;
@@ -71,11 +71,19 @@ html, body {
 
 /* 标题在图片上方 */
 .img-title {
+    font-size: 22px !important; /* 放大字号，使用 !important 提高优先级 */
     font-weight: 600;
     padding: 10px 12px;
     text-align: left;
     color: #111;
     background: rgba(255, 255, 255, 0.02);
+    line-height: 1.2;
+}
+
+/* 更高优先级的父选择器以防被覆盖 */
+.uploaded-img .img-title,
+.segmented-img .img-title {
+    font-size: 22px !important;
 }
 
 /* 图片占位/展示区域 */

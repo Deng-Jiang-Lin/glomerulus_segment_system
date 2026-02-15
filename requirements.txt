@@ -3,3 +3,6 @@ uvicorn[standard]
 python-multipart
 pillow
 numpy
+aiofiles
+albumentations
+tqdm
