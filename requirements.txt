@@ -5,4 +5,5 @@ pillow
 numpy
 aiofiles
 albumentations
+segmentation_models_pytorch
 tqdm
